@@ -11,8 +11,8 @@
       <button @click="performSearch" :disabled="loading || !query">{{ loading ? '🤖 思考中...' : '✨ 搜索' }}</button>
     </div>
 
-    <Warehouse3D :targetName="currentItem.name" :targetLocation="currentItem.location" v-if="results.length > 0 && currentItem.name" />
-    
+    <Warehouse3D :targetName="currentItem.name" :targetLocation="currentItem.location" :refreshKey="refresh3DKey" v-if="results.length > 0 && currentItem.name" />
+
     <div v-if="results.length > 0" class="results">
       <h2>为您推荐：</h2>
       <div v-for="(item, index) in results" :key="index" class="card">
@@ -21,7 +21,7 @@
           <p class="loc-badge">位置：{{ item.location || '未知' }} | 💰 ￥{{ item.price || 0 }} | 📦 库存: {{ item.stock || 0 }}</p>
         </div>
         <div class="action-btns">
-          <button class="view-btn" @click="currentItem = item">📍 3D 位置</button>
+          <button class="view-btn" @click="currentItem = item; refresh3DKey = Date.now()">📍 3D 位置</button>
           <button class="buy-btn" @click="startPurchase(item)">🛒 购买</button>
         </div>
       </div>
@@ -59,7 +59,9 @@ const currentItem = ref({})
 const query = ref('')           
 const results = ref([])         
 const loading = ref(false)      
-const searched = ref(false)     
+const searched = ref(false)   
+
+const refresh3DKey = ref(Date.now())
 
 // 购买弹窗相关变量
 const showBuyModal = ref(false)
@@ -73,7 +75,10 @@ const performSearch = async () => {
     const res = await axios.post('http://localhost:8080/api/hardware/semantic-search', { query: query.value, limit: 3 })
     if (res.data && res.data.ok) {
       results.value = res.data.candidates || []
-      if (results.value.length > 0) currentItem.value = results.value[0]
+      if (results.value.length > 0) {
+        currentItem.value = results.value[0]
+        refresh3DKey.value = Date.now() // 👈 搜到就刷新
+      }
     }
   } catch (error) { console.error(error) } finally { loading.value = false; searched.value = true }
 }
