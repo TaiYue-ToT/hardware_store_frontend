@@ -1,7 +1,8 @@
 <template>
   <div class="warehouse-3d" ref="sceneContainer">
     <div v-if="targetName" class="overlay-text">
-      📍 目标位置：{{ targetName }} 所在货架
+      <h3>📦 目标：{{ targetName }}</h3>
+      <p>📍 仓库位置：<span class="highlight">{{ targetLocation || '未分配位置' }}</span></p>
     </div>
   </div>
 </template>
@@ -10,73 +11,102 @@
 import { ref, onMounted, watch } from 'vue'
 import * as THREE from 'three'
 
-// 接收父页面（App.vue）传过来的物品名字
 const props = defineProps({
-  targetName: String
+  targetName: String,
+  targetLocation: String // 接收具体的位置字符串
 })
 
 const sceneContainer = ref(null)
 let scene, camera, renderer, targetBox
 
-// 初始化 3D 场景
 const init3D = () => {
-  // 1. 建一个舞台
   scene = new THREE.Scene()
   scene.background = new THREE.Color('#eef2f5')
 
-  // 2. 架设摄像机
   camera = new THREE.PerspectiveCamera(45, sceneContainer.value.clientWidth / 300, 0.1, 1000)
-  camera.position.set(0, 5, 10)
-  camera.lookAt(0, 0, 0)
+  camera.position.set(0, 5, 12) // 调整视角，俯视货架
+  camera.lookAt(0, 2.5, 0)
 
-  // 3. 准备渲染器
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(sceneContainer.value.clientWidth, 300)
   sceneContainer.value.appendChild(renderer.domElement)
 
-  // 4. 打上灯光
+  // 打光，让金属有立体感
   const light = new THREE.DirectionalLight(0xffffff, 1)
-  light.position.set(5, 10, 5)
+  light.position.set(5, 10, 8)
   scene.add(light)
-  scene.add(new THREE.AmbientLight(0x606060))
+  scene.add(new THREE.AmbientLight(0x888888))
 
-  // 5. 画一个网格代表货架
-  const gridHelper = new THREE.GridHelper(10, 10, 0x888888, 0xcccccc)
+  // 地面网格
+  const gridHelper = new THREE.GridHelper(20, 20, 0xcccccc, 0xdddddd)
   scene.add(gridHelper)
 
-  // 6. 画一个红色的高亮方块（代表我们要找的物品）
-  const boxGeo = new THREE.BoxGeometry(1, 1, 1)
-  const boxMat = new THREE.MeshLambertMaterial({ color: '#ff4757' })
+  // ==========================================
+  // 🛠️ 建造 3D 立体金属货架
+  // ==========================================
+  const shelfGroup = new THREE.Group()
+  const shelfMat = new THREE.MeshLambertMaterial({ color: '#2c3e50' }) // 深蓝色金属漆
+
+  // 画 4 根竖向的支撑柱 (高 6)
+  const postGeo = new THREE.BoxGeometry(0.2, 6, 0.2)
+  const positions = [ [-3.1, 3, -1.1], [3.1, 3, -1.1], [-3.1, 3, 1.1], [3.1, 3, 1.1] ]
+  positions.forEach(pos => {
+    const post = new THREE.Mesh(postGeo, shelfMat)
+    post.position.set(...pos)
+    shelfGroup.add(post)
+  })
+
+  // 画 4 层横向的层板
+  const boardGeo = new THREE.BoxGeometry(6.4, 0.1, 2.4)
+  const boardY = [0.5, 2.0, 3.5, 5.0] // 层板的高度
+  boardY.forEach(y => {
+    const board = new THREE.Mesh(boardGeo, shelfMat)
+    board.position.set(0, y, 0)
+    shelfGroup.add(board)
+  })
+  scene.add(shelfGroup)
+
+  // ==========================================
+  // 🟥 目标物品的高亮红框
+  // ==========================================
+  const boxGeo = new THREE.BoxGeometry(1.5, 1.2, 1.5)
+  const boxMat = new THREE.MeshLambertMaterial({ color: '#e74c3c', emissive: '#c0392b', transparent: true, opacity: 0.8 }) 
   targetBox = new THREE.Mesh(boxGeo, boxMat)
-  targetBox.position.set(0, 0.5, 0) 
-  targetBox.visible = false // 没搜到东西前先藏起来
+  targetBox.visible = false 
   scene.add(targetBox)
 
-  // 开始循环播放动画
   animate()
 }
 
 const animate = () => {
   requestAnimationFrame(animate)
-  // 如果方块显示出来了，就让它转圈圈，更显眼
-  if (targetBox.visible) {
-    targetBox.rotation.y += 0.03
-  }
   renderer.render(scene, camera)
 }
 
-// 监听传进来的物品名字，一旦有变化，就把红色方块显现出来！
-watch(() => props.targetName, (newName) => {
-  if (newName) {
+// 监听传进来的位置，动态移动红框到指定层板！
+watch(() => props.targetLocation, (newLoc) => {
+  if (props.targetName) {
     targetBox.visible = true
-    // 实际项目中这里可以通过后端返回的坐标移动方块，这里先演示原地旋转
-    targetBox.position.set((Math.random() - 0.5) * 4, 0.5, (Math.random() - 0.5) * 4) 
+    
+    // 简单的“定位算法”：把 location 字符串转成对应的格子位置
+    // 货架分 3 层 (y=1.1, 2.6, 4.1)，每层分 3 个格子 (x=-2, 0, 2)
+    let hash = 0
+    if (newLoc) {
+      for (let i = 0; i < newLoc.length; i++) hash += newLoc.charCodeAt(i)
+    }
+    
+    const layerIndex = hash % 3      // 决定在哪一层
+    const colIndex = (hash + 1) % 3  // 决定在哪一列
+
+    const yPos = [1.1, 2.6, 4.1][layerIndex] // 红框放在层板上的高度
+    const xPos = [-2, 0, 2][colIndex]
+
+    targetBox.position.set(xPos, yPos, 0) // 精准落位！
   } else {
     targetBox.visible = false
   }
 })
 
-// 网页加载完毕后，立刻启动 3D 引擎
 onMounted(() => {
   init3D()
 })
@@ -89,18 +119,31 @@ onMounted(() => {
   border-radius: 12px;
   overflow: hidden;
   position: relative;
-  box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
-  border: 2px solid #ddd;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  border: 1px solid #ddd;
 }
 .overlay-text {
   position: absolute;
   top: 15px;
   left: 15px;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(44, 62, 80, 0.85);
   color: #fff;
-  padding: 8px 16px;
-  border-radius: 20px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  backdrop-filter: blur(5px);
+}
+.overlay-text h3 {
+  margin: 0 0 5px 0;
+  font-size: 16px;
+  color: #f1c40f;
+}
+.overlay-text p {
+  margin: 0;
   font-size: 14px;
+}
+.highlight {
   font-weight: bold;
+  color: #e74c3c;
+  font-size: 16px;
 }
 </style>
