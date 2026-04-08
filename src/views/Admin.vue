@@ -35,7 +35,7 @@
     </div>
 
     <div class="panel add-panel full-width">
-      <h2>📦 新货入库 (支持数字/品牌/规格)</h2>
+      <h2>📦 新货入库</h2>
       <form @submit.prevent="handleAddItem" class="add-form-inline">
         <input v-model="newItem.name" required placeholder="名称 (如: 3M-101)" />
         <input v-model="newItem.brand" required placeholder="品牌" />
@@ -109,30 +109,50 @@ const locShelf = ref(1); const locLayer = ref(1); const locSlot = ref(1)
 const newItem = ref({ name: '', brand: '', model: '', stock: '', price: '' })
 let timer = null
 
+// 【核心修复】搜索过滤逻辑，处理字段可能为 null 的情况
 const filteredInventory = computed(() => {
   if (!searchKey.value) return inventory.value
   const key = searchKey.value.toLowerCase()
-  return inventory.value.filter(i => (i.name+i.brand+i.model).toLowerCase().includes(key))
+  return inventory.value.filter(item => {
+    const n = (item.name || '').toLowerCase()
+    const b = (item.brand || '').toLowerCase()
+    const m = (item.model || '').toLowerCase()
+    return n.includes(key) || b.includes(key) || m.includes(key)
+  })
 })
 
+// 【核心修复】分离请求，防止单一接口报错阻塞全部数据展示
 const fetchAllData = async () => {
-  try {
-    const [resO, resH, resI] = await Promise.all([
-      axios.get('http://localhost:8080/api/orders/pending'),
-      axios.get('http://localhost:8080/api/orders/history'),
-      axios.get('http://localhost:8080/api/hardware/items')
-    ])
-    orders.value = resO.data; history.value = resH.data
-    inventory.value = resI.data.map(i => ({ ...i, isEditing: false, editPrice: i.price }))
-  } catch (e) { console.error("API 报错，请检查后端是否启动及接口路径", e) }
+  // 1. 获取待处理订单
+  axios.get('http://localhost:8080/api/orders/pending')
+    .then(res => orders.value = res.data)
+    .catch(e => console.error("待处理订单加载失败", e))
+
+  // 2. 获取销售流水
+  axios.get('http://localhost:8080/api/orders/history')
+    .then(res => history.value = res.data)
+    .catch(e => console.error("销售流水加载失败", e))
+
+  // 3. 获取实时库存
+  axios.get('http://localhost:8080/api/hardware/items')
+    .then(res => {
+      inventory.value = res.data.map(i => ({ ...i, isEditing: false, editPrice: i.price }))
+    })
+    .catch(e => console.error("库存数据加载失败", e))
 }
 
-onMounted(() => { fetchAllData(); timer = setInterval(() => { if(!inventory.value.some(i=>i.isEditing)) fetchAllData() }, 5000) })
+onMounted(() => { 
+  fetchAllData()
+  timer = setInterval(() => { 
+    if(!inventory.value.some(i => i.isEditing)) fetchAllData() 
+  }, 5000) 
+})
 onUnmounted(() => clearInterval(timer))
 
 const handleAddItem = async () => {
   submitting.value = true
-  const locationStr = `${locShelf.value}架${locLayer.value}层${locSlot.value}格`
+  // 修改为“货架”，匹配 3D 组件的正则
+  const locationStr = `${locShelf.value}货架${locLayer.value}层${locSlot.value}格`
   try {
     await axios.post('http://localhost:8080/api/hardware/add', { ...newItem.value, location: locationStr })
     newItem.value = { name: '', brand: '', model: '', stock: '', price: '' }
@@ -142,23 +162,20 @@ const handleAddItem = async () => {
 
 const startEdit = (item) => { item.editPrice = item.price; item.isEditing = true }
 
-// 💾 保存修改的价格
 const savePrice = async (item) => {
   try {
-    // 调用刚才我们在后端写的 PUT 接口
     await axios.put(`http://localhost:8080/api/hardware/updatePrice/${item.id}`, { price: item.editPrice })
-    item.isEditing = false; fetchAllData()
-  } catch (e) { alert("改价失败") }
+    item.isEditing = false
+    fetchAllData()
+  } catch (e) { alert("改价失败，请检查后端 PUT 权限") }
 }
 
-// 🗑️ 删除货物
 const handleDelete = async (id, name) => {
   if (confirm(`确定要彻底删除【${name}】吗？`)) {
     try {
-      // 调用刚才我们在后端写的 DELETE 接口
       await axios.delete(`http://localhost:8080/api/hardware/delete/${id}`)
-      fetchAllData() // 刷新后，前端序号会自动重新排列成升序
-    } catch (e) { alert("删除失败") }
+      fetchAllData()
+    } catch (e) { alert("删除失败，请检查后端 DELETE 权限") }
   }
 }
 
