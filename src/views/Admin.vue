@@ -134,8 +134,8 @@ let timer = null
 const isMatch = computed(() => {
   if (!newItem.value.name || !newItem.value.brand || !newItem.value.price) return false;
   return inventory.value.some(item => 
-    item.name === newItem.value.name && 
-    item.brand === newItem.value.brand && 
+    item.name === newItem.value.name.trim() && 
+    item.brand === newItem.value.brand.trim() && 
     Number(item.price) === Number(newItem.value.price)
   )
 })
@@ -171,13 +171,34 @@ onUnmounted(() => clearInterval(timer))
 
 const handleAddItem = async () => {
   submitting.value = true
-  const locationStr = isMatch.value ? null : `${locShelf.value}货架${locLayer.value}层${locSlot.value}格`
+  
+  // 准备发送的数据
+  let payload = { 
+    name: newItem.value.name.trim(),
+    brand: newItem.value.brand.trim(),
+    model: newItem.value.model.trim(),
+    price: Number(newItem.value.price),
+    stock: Number(newItem.value.stock)
+  }
+
+  // 【核心修复点】只有不是匹配项（即新货）时，才拼接并添加 location 字段
+  // 如果是匹配项，payload 里根本就不带 location 属性，后端就不会更新它
+  if (!isMatch.value) {
+    payload.location = `${locShelf.value}货架${locLayer.value}层${locSlot.value}格`
+  }
+
   try {
-    await axios.post('http://localhost:8080/api/hardware/add', { ...newItem.value, location: locationStr })
+    await axios.post('http://localhost:8080/api/hardware/add', payload)
+    alert(isMatch.value ? "✅ 库存合并成功！" : "🎉 新货入库成功！")
+    
+    // 重置表单
     newItem.value = { name: '', brand: '', model: '', stock: '', price: '' }
-    alert("入库成功！")
     fetchAllData()
-  } finally { submitting.value = false }
+  } catch (e) {
+    alert("入库失败")
+  } finally {
+    submitting.value = false
+  }
 }
 
 const startEdit = (item) => { item.editPrice = item.price; item.isEditing = true }
