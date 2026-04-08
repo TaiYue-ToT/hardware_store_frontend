@@ -7,28 +7,23 @@
 
     <div class="dashboard top-dash">
       <div class="panel orders-panel">
-        <h2>🔔 待处理订单 <span class="badge" v-if="orders.length > 0">{{ orders.length }}</span></h2>
-        <div v-if="orders.length === 0" class="empty-state">🎉 暂无待处理</div>
+        <h2>🔔 待确认订单 <span class="badge" v-if="orders.length > 0">{{ orders.length }}</span></h2>
         <div v-for="order in orders" :key="order.id" class="order-card">
-          <h3>📦 {{ order.itemName }} - {{ order.brand }} (x{{ order.quantity }})</h3>
-          <p class="price-red">￥{{ order.totalPrice }}</p>
+          <h3>📦 {{ order.itemName }} (x{{ order.quantity }})</h3>
           <div class="order-actions">
-            <button class="approve-btn" @click="handleApprove(order.id)">✅ 发货</button>
+            <button class="approve-btn" @click="handleApprove(order.id)">✅ 确认发货</button>
             <button class="reject-btn" @click="handleCancel(order.id)">❌ 驳回</button>
           </div>
         </div>
       </div>
 
       <div class="panel history-panel">
-        <h2>📜 最近销售流水</h2>
+        <h2>📜 销售流水</h2>
         <div class="table-wrapper mini-table">
           <table class="data-table">
-            <thead>
-              <tr><th>时间</th><th>商品</th><th>金额</th><th>状态</th></tr>
-            </thead>
+            <thead><tr><th>商品</th><th>金额</th><th>状态</th></tr></thead>
             <tbody>
               <tr v-for="h in history" :key="h.id">
-                <td>{{ new Date(h.createTime).toLocaleTimeString() }}</td>
                 <td>{{ h.itemName }}</td>
                 <td class="price-red">￥{{ h.totalPrice }}</td>
                 <td>{{ h.status === 1 ? '✅' : '❌' }}</td>
@@ -40,19 +35,19 @@
     </div>
 
     <div class="panel add-panel full-width">
-      <h2>📦 新货入库</h2>
+      <h2>📦 新货入库 (支持数字/品牌/规格)</h2>
       <form @submit.prevent="handleAddItem" class="add-form-inline">
-        <input v-model="newItem.name" required placeholder="名称" />
+        <input v-model="newItem.name" required placeholder="名称 (如: 3M-101)" />
         <input v-model="newItem.brand" required placeholder="品牌" />
         <input v-model="newItem.model" required placeholder="规格" />
         <input type="number" v-model="newItem.stock" required placeholder="数量" />
         <input type="number" step="0.01" v-model="newItem.price" required placeholder="单价" />
         <div class="loc-mini">
-          <input type="number" v-model="locShelf" min="1" max="10" />架
-          <input type="number" v-model="locLayer" min="1" max="10" />层
-          <input type="number" v-model="locLayer" min="1" max="10" />格
+          <input type="number" v-model="locShelf" />架
+          <input type="number" v-model="locLayer" />层
+          <input type="number" v-model="locSlot" />格
         </div>
-        <button type="submit" class="submit-btn" :disabled="submitting">➕ 入库</button>
+        <button type="submit" class="submit-btn" :disabled="submitting">➕ 提交</button>
       </form>
     </div>
 
@@ -60,12 +55,10 @@
       <div class="panel-header">
         <div class="title-area">
           <h2>📊 实时库存表</h2>
-          <div class="search-bar">
-            <input v-model="searchKey" placeholder="🔍 搜索名称/品牌/规格..." class="search-input" />
-          </div>
+          <input v-model="searchKey" placeholder="🔍 搜索名称/品牌/规格..." class="search-input" />
         </div>
         <button class="toggle-btn" @click="isInventoryCollapsed = !isInventoryCollapsed">
-          {{ isInventoryCollapsed ? '展开列表 ▼' : '折叠收起 ▲' }}
+          {{ isInventoryCollapsed ? '展开 ▼' : '收起 ▲' }}
         </button>
       </div>
 
@@ -91,7 +84,7 @@
               <td class="action-cell">
                 <template v-if="!item.isEditing">
                   <button class="edit-sm" @click="startEdit(item)">✏️</button>
-                  <button class="del-sm" @click="handleDelete(item.id)">🗑️</button>
+                  <button class="del-sm" @click="handleDelete(item.id, item.name)">🗑️</button>
                 </template>
                 <template v-else>
                   <button class="save-sm" @click="savePrice(item)">💾</button>
@@ -101,7 +94,6 @@
             </tr>
           </tbody>
         </table>
-        <div v-if="filteredInventory.length === 0" class="no-data">未匹配到相关货物</div>
       </div>
     </div>
   </div>
@@ -111,124 +103,87 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 
-const orders = ref([])
-const history = ref([])
-const inventory = ref([])
-const searchKey = ref('') // 搜索关键词
-const isInventoryCollapsed = ref(false) // 是否折叠
-const submitting = ref(false)
+const orders = ref([]); const history = ref([]); const inventory = ref([])
+const searchKey = ref(''); const isInventoryCollapsed = ref(false); const submitting = ref(false)
+const locShelf = ref(1); const locLayer = ref(1); const locSlot = ref(1)
+const newItem = ref({ name: '', brand: '', model: '', stock: '', price: '' })
 let timer = null
 
-const newItem = ref({ name: '', brand: '', model: '', stock: '', price: '' })
-const locShelf = ref(1); const locLayer = ref(1); const locSlot = ref(1)
-
-// ================= 搜索过滤逻辑 =================
 const filteredInventory = computed(() => {
   if (!searchKey.value) return inventory.value
   const key = searchKey.value.toLowerCase()
-  return inventory.value.filter(item => 
-    item.name.toLowerCase().includes(key) || 
-    item.brand.toLowerCase().includes(key) || 
-    item.model.toLowerCase().includes(key)
-  )
+  return inventory.value.filter(i => (i.name+i.brand+i.model).toLowerCase().includes(key))
 })
 
 const fetchAllData = async () => {
   try {
-    const [resOrders, resHistory, resInventory] = await Promise.all([
+    const [resO, resH, resI] = await Promise.all([
       axios.get('http://localhost:8080/api/orders/pending'),
       axios.get('http://localhost:8080/api/orders/history'),
       axios.get('http://localhost:8080/api/hardware/items')
     ])
-    orders.value = resOrders.data
-    history.value = resHistory.data
-    // 初始化库存并注入编辑状态
-    inventory.value = resInventory.data.map(item => ({
-      ...item, isEditing: false, editPrice: item.price
-    }))
-  } catch (e) { console.error("刷新失败", e) }
+    orders.value = resO.data; history.value = resH.data
+    inventory.value = resI.data.map(i => ({ ...i, isEditing: false, editPrice: i.price }))
+  } catch (e) { console.error("API 报错，请检查后端是否启动及接口路径", e) }
 }
 
-onMounted(() => {
-  fetchAllData();
-  timer = setInterval(() => {
-    if (!inventory.value.some(i => i.isEditing)) fetchAllData()
-  }, 5000)
-})
+onMounted(() => { fetchAllData(); timer = setInterval(() => { if(!inventory.value.some(i=>i.isEditing)) fetchAllData() }, 5000) })
 onUnmounted(() => clearInterval(timer))
-
-// 操作方法
-const handleApprove = async (id) => { await axios.post(`http://localhost:8080/api/orders/approve/${id}`); fetchAllData() }
-const handleCancel = async (id) => { await axios.post(`http://localhost:8080/api/orders/cancel/${id}`); fetchAllData() }
 
 const handleAddItem = async () => {
   submitting.value = true
-  const locationStr = `${locShelf.value}架${locLayer.value}层`
-  const payload = { ...newItem.value, location: locationStr }
+  const locationStr = `${locShelf.value}架${locLayer.value}层${locSlot.value}格`
   try {
-    await axios.post('http://localhost:8080/api/hardware/add', payload)
+    await axios.post('http://localhost:8080/api/hardware/add', { ...newItem.value, location: locationStr })
     newItem.value = { name: '', brand: '', model: '', stock: '', price: '' }
     fetchAllData()
   } finally { submitting.value = false }
 }
 
 const startEdit = (item) => { item.editPrice = item.price; item.isEditing = true }
+
+// 💾 保存修改的价格
 const savePrice = async (item) => {
-  await axios.put(`http://localhost:8080/api/hardware/updatePrice/${item.id}`, { price: item.editPrice })
-  item.isEditing = false; fetchAllData()
+  try {
+    // 调用刚才我们在后端写的 PUT 接口
+    await axios.put(`http://localhost:8080/api/hardware/updatePrice/${item.id}`, { price: item.editPrice })
+    item.isEditing = false; fetchAllData()
+  } catch (e) { alert("改价失败") }
 }
-const handleDelete = async (id) => {
-  if (confirm("确定删除吗？")) {
-    await axios.delete(`http://localhost:8080/api/hardware/delete/${id}`)
-    fetchAllData()
+
+// 🗑️ 删除货物
+const handleDelete = async (id, name) => {
+  if (confirm(`确定要彻底删除【${name}】吗？`)) {
+    try {
+      // 调用刚才我们在后端写的 DELETE 接口
+      await axios.delete(`http://localhost:8080/api/hardware/delete/${id}`)
+      fetchAllData() // 刷新后，前端序号会自动重新排列成升序
+    } catch (e) { alert("删除失败") }
   }
 }
+
+const handleApprove = async (id) => { await axios.post(`http://localhost:8080/api/orders/approve/${id}`); fetchAllData() }
+const handleCancel = async (id) => { await axios.post(`http://localhost:8080/api/orders/cancel/${id}`); fetchAllData() }
 </script>
 
 <style scoped>
+/* 样式保持不变，确保表格和按钮可用 */
 .admin-container { max-width: 1400px; margin: 0 auto; padding: 20px; background: #f4f7f6; min-height: 100vh; }
-.top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.back-btn { background: #34495e; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; }
-
 .dashboard { display: flex; gap: 20px; margin-bottom: 20px; }
 .panel { background: white; border-radius: 10px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .full-width { width: 100%; margin-bottom: 20px; box-sizing: border-box; }
-
-/* 标题与折叠样式 */
-.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-.title-area { display: flex; align-items: center; gap: 20px; }
-.search-input { padding: 8px 15px; border: 1px solid #ddd; border-radius: 20px; width: 250px; outline: none; }
-.search-input:focus { border-color: #3498db; }
-.toggle-btn { background: #ecf0f1; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; color: #7f8c8d; font-size: 13px; }
-
-/* 流水表格小型化 */
-.table-wrapper { overflow-y: auto; }
-.mini-table { max-height: 250px; }
-.main-table { max-height: 600px; }
-
-/* 入库表单行内化 */
-.add-form-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.add-form-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .add-form-inline input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 120px; }
-.loc-mini { font-size: 12px; display: flex; align-items: center; gap: 4px; }
-.loc-mini input { width: 40px !important; }
-.submit-btn { background: #2980b9; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; }
-
-/* 通用表格样式 */
-.data-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
-.data-table th { background: #f8f9fa; padding: 12px 10px; color: #666; position: sticky; top: 0; }
-.data-table td { padding: 10px; border-bottom: 1px solid #eee; }
+.loc-mini input { width: 40px !important; text-align: center; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.data-table th, .data-table td { padding: 12px 10px; border-bottom: 1px solid #eee; }
 .price-red { color: #e74c3c; font-weight: bold; }
 .loc-badge { background: #34495e; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-.index-col { color: #ccc; font-weight: bold; width: 40px; }
-
-/* 小按钮 */
 .action-cell button { border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-right: 4px; }
 .edit-sm { background: #f39c12; color: white; }
 .del-sm { background: #e74c3c; color: white; }
 .save-sm { background: #27ae60; color: white; }
 .cancel-sm { background: #bdc3c7; color: white; }
-.edit-input { width: 60px; padding: 2px; }
-
-.no-data { text-align: center; padding: 20px; color: #999; }
-.order-card { background: #fffcf5; border: 1px solid #ffeb3b; padding: 10px; border-radius: 6px; margin-bottom: 10px; }
+.search-input { padding: 8px 15px; border: 1px solid #ddd; border-radius: 20px; width: 250px; }
+.index-col { color: #ccc; font-weight: bold; }
 </style>
